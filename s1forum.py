@@ -1,11 +1,10 @@
 import re
-from tkinter.tix import Tree
+import time
 import aiohttp
 import asyncio
 from bs4 import BeautifulSoup as bs, NavigableString, Tag
 from urllib.parse import urlparse,parse_qs
-from qqbot.model.message import MessageEmbedField, MessageEmbed
-
+from botpy.types.message import EmbedField, Embed
 
 class S1Forum:
     # proxies = {
@@ -39,6 +38,51 @@ class S1Forum:
             # print("Auth failed")
             return False
 
+    async def newThread(self, fid:int, subject:str, message:str, typeid:int = 349, readperm:int = 0):
+        if not self.checkauth():
+            await self.login()
+        _, formhash = await self.form_hash(f"/forum.php?mod=post&action=newthread")
+        nt_urlraw = f"https://{self.hostname}/forum.php?mod=post&action=newthread&fid={fid}&extra=&topicsubmit=yes"
+        formData = {
+            'formhash': formhash,
+            'posttime': time.time(),
+            'wysiwyg': '1',
+            'typeid': typeid,
+            'subject': subject,
+            'message': message,
+            'readperm': readperm,
+            'allownoticeauthor': '1',
+            'usesig': '1',
+            'save': '',
+            'cookietime': 2592000
+        }
+        async with self.session.post(nt_urlraw, data=formData) as resp:
+            assert resp.status == 200
+            resptext = await resp.text()
+            return resptext
+
+    async def reply(self, fid:int, tid:int, message:str):
+        if not self.checkauth():
+            await self.login()
+        _, formhash = await self.form_hash("/forum.php?mod=post&action=reply")
+        nt_urlraw = f"https://{self.hostname}/forum.php?mod=post&action=reply&fid={fid}&tid={tid}&extra=&replysubmit=yes"
+        formData = {
+            'formhash': formhash,
+            'posttime': time.time(),
+            'wysiwyg': '1',
+            'noticeauthor': '',
+            'noticetrimstr': '',
+            'noticeauthormsg': '',
+            'subject': "",
+            'message': message,
+            'usesig': '1',
+            'save': '',
+            'cookietime': 2592000
+        }
+        async with self.session.post(nt_urlraw, data=formData) as resp:
+            assert resp.status == 200
+            resptext = await resp.text()
+
     async def fetchAndParse(self,url:str):
         if not self.checkauth():
             await self.login()
@@ -54,7 +98,7 @@ class S1Forum:
         post = await self.fetchAndParse(url)
         if type(post) != NavigableString and type(post) != Tag:
             return post
-        embed = MessageEmbed()
+        embed = Embed()
         embed.title = board
         embed.prompt = board + "新帖列表"
         embed.fields = []
@@ -69,7 +113,7 @@ class S1Forum:
             if i > 15:
                 break
             else:
-                embed.fields.append(MessageEmbedField(name=s, value="content")) 
+                embed.fields.append(EmbedField(name=s, value="content")) 
         return embed
 
 
@@ -89,7 +133,7 @@ class S1Forum:
         if type(post) != NavigableString and type(post) != Tag:
             return post
         # 构造消息发送请求数据对象
-        embed = MessageEmbed()
+        embed = Embed()
         embed.title = post.h3.string
         embed.prompt = post.p.string
         embed.fields = []
@@ -101,27 +145,34 @@ class S1Forum:
             if len(embed.fields) > 15:
                 break
             else:
-                embed.fields.append(MessageEmbedField(name=s, value="content")) 
+                embed.fields.append(EmbedField(name=s, value="content")) 
         return embed
 
     def close(self):
         if self.session is not None:
             self.session.close()
 
-    async def fetch(self):
-        async with self.session.get(f'https://{self.hostname}/member.php?mod=logging&action=login') as resp:
-            assert resp.status == 200
-            return await resp.text()
+    # async def fetch(self):
+    #     async with self.session.get(f'https://{self.hostname}/member.php?mod=logging&action=login') as resp:
+    #         assert resp.status == 200
+    #         return await resp.text()
 
-    async def form_hash(self):
-        rst = await self.fetch()
-        loginhash = re.search(r'<div id="main_messaqge_(.+?)">', rst).group(1)
+    async def form_hash(self, path:str):
+        async with self.session.get(f'https://{self.hostname}{path}') as resp:
+            assert resp.status == 200
+            rst = await resp.text()
+        # rst = await self.fetch()
+        if "action=login" in path:
+            loginhash = re.search(r'<div id="main_messaqge_(.+?)">', rst).group(1)
+        else:
+            loginhash = None
         formhash = re.search(r'<input type="hidden" name="formhash" value="(.+?)" />', rst).group(1)
         return loginhash, formhash
 
     async def login(self):
-        loginhash, formhash = await self.form_hash()
-        login_url = f'https://{self.hostname}/member.php?mod=logging&action=login&loginsubmit=yes&loginhash={loginhash}&inajax=1'
+        path = "/member.php?mod=logging&action=login"
+        loginhash, formhash = await self.form_hash(path)
+        login_url = f'https://{self.hostname}{path}&loginsubmit=yes&loginhash={loginhash}&inajax=1'
         formData = {
             'formhash': formhash,
             'referer': f'https://{self.hostname}/',
